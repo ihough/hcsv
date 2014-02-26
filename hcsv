@@ -1,0 +1,136 @@
+#!/usr/bin/env ruby
+
+# Dump a postgresql table containing one or more hstore columns to a csv
+
+require 'thor'
+
+class HCsv < Thor
+  # define internal methods
+  no_commands do
+    # execute a query using psql
+    def psql(db, sql)
+      `psql --no-align --tuples-only --command #{sql.inspect} #{db}`
+    end
+
+    # list all tables in the specified db
+    def hcsv_tables(db)
+      sql = %{
+        SELECT c.relname
+        FROM pg_catalog.pg_class c
+        LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = 'r' AND n.nspname = 'public'
+      }.gsub(/\s+/, ' ')
+      psql(db, sql).split("\n")
+    end
+
+    # list all non-hstore columns in the specified db table
+    def hcsv_columns(db, table)
+      sql = %{
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = '#{table}' AND udt_name != 'hstore'
+      }.gsub(/\s+/, ' ')
+      psql(db, sql).split("\n")
+    end
+
+    # list all hstore columns in the specified db table
+    def hcsv_hstores(db, table)
+      sql = %{
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = '#{table}' AND udt_name = 'hstore'
+      }.gsub(/\s+/, ' ')
+      psql(db, sql).split("\n")
+    end
+
+    # list all keys in the specified db table hstore column
+    def hcsv_hkeys(db, table, hstore)
+      sql = %{
+        SELECT DISTINCT k
+        FROM (
+          SELECT skeys(#{hstore}) AS k
+          FROM #{table}
+        ) AS keys
+        ORDER BY k
+      }.gsub(/\s+/, ' ')
+      psql(db, sql).split("\n")
+    end
+  end
+
+  desc 'tables [DBNAME]', 'List tables in the specified db'
+  def tables(db)
+    hcsv_tables(db).each { |t| puts t }
+  end
+
+  desc 'columns [DBNAME] [TABLENAME]', 'List non-hstore columns in the specified db table'
+  def columns(db, table)
+    hcsv_columns(db, table).each { |c| puts c }
+  end
+
+  desc 'hstores [DBNAME] [TABLENAME]', 'List hstore columns in the specified db table'
+  def hstores(db, table)
+    hcsv_hstores(db, table).each { |h| puts h }
+  end
+
+  desc 'hkeys [DBNAME] [TABLENAME]', "List the keys in the specified db table's hstore columns"
+  option :hstores, desc: 'Only list keys from the specified hstore column(s)'
+  def hkeys(db, table)
+    if options[:hstores]
+      hs = options[:hstores].split(/\s*,\s*/)
+    else
+      hs = hcsv_hstores(db, table)
+    end
+    hs.each do |h|
+      puts "[#{table}.#{h}]" if hs.length > 1
+      hcsv_hkeys(db, table, h).each { |k| puts k }
+      puts if hs.length > 1
+    end
+  end
+
+  desc 'dump [DBNAME] [TABLENAME]', 'Dump the specified db table to a csv'
+  option :cols, desc: 'Only dump the specified non-hstore columns'
+  option :hstores, desc: 'Only dump the specified hstore columns'
+  option :keys, desc: 'Only dump the specified hstore keys'
+  option :limit, desc: 'Only dump the specified number of rows'
+  def dump(db, table)
+    # build the sql to select non-hstore columns
+    if options[:cols]
+      dump_columns = options[:cols].split(/\s*,\s*/)
+    else
+      dump_columns = hcsv_columns(db, table)
+    end
+    column_selection_sql = dump_columns.join(', ')
+
+    # build the sql to select hstore columns
+    dump_keys = {}
+    if options[:hstores]
+      hs = options[:hstores].split(/\s*,\s*/)
+    else
+      hs = hcsv_hstores(db, table)
+    end
+    hs.each do |h|
+      if options[:keys]
+        dump_keys[h] = options[:keys].split(/\s*,\s*/)
+      else
+        dump_keys[h] = hcsv_hkeys(db, table, h)
+      end
+    end
+    hstore_selection_sql = dump_keys.map do |h, ks|
+      ks.map { |k| %{#{h}->'#{k}' AS "#{h}.#{k.delete '?'}"} }.join(', ')
+    end.join(', ')
+
+    # build the complete query to select and copy to stdout in csv format
+    sql = %{
+      COPY (
+        SELECT #{column_selection_sql}, #{hstore_selection_sql}
+        FROM #{table}
+        #{"LIMIT #{options[:limit]}" if options[:limit]}
+      ) TO STDOUT (FORMAT CSV, HEADER)
+    }.gsub(/\s+/, ' ')
+
+    # execute the query
+    puts psql(db, sql)
+  end
+end
+
+HCsv.start(ARGV)
