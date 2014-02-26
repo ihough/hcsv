@@ -11,11 +11,11 @@ Move or symlink hcsv into your PATH.
 Usage
 --------
 
-Dump an entire table:
+Dump an entire table to a csv:
 
-    hcsv dump mydb mytable
+    hcsv dump mydb mytable > my_dump.csv
 
-Dump selected data from a table:
+View selected data from a table:
 
     hcsv dump mydb mytable --cols column1,column2 --hstores hstore1,hstore2 --keys key1,key2 --limit 100
 
