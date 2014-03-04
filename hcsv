@@ -90,7 +90,7 @@ class HCsv < Thor
   desc 'dump [DBNAME] [TABLENAME]', 'Dump the specified db table to a csv'
   option :cols, desc: 'Only dump the specified non-hstore columns'
   option :hstores, desc: 'Only dump the specified hstore columns'
-  option :keys, desc: 'Only dump the specified hstore keys'
+  option :hkeys, desc: 'Only dump the specified hstore keys'
   option :limit, desc: 'Only dump the specified number of rows'
   def dump(db, table)
     # build the sql to select non-hstore columns
@@ -109,8 +109,8 @@ class HCsv < Thor
       hs = hcsv_hstores(db, table)
     end
     hs.each do |h|
-      if options[:keys]
-        dump_keys[h] = options[:keys].split(/\s*,\s*/)
+      if options[:hkeys]
+        dump_keys[h] = options[:hkeys].split(/\s*,\s*/)
       else
         dump_keys[h] = hcsv_hkeys(db, table, h)
       end
